@@ -3,8 +3,7 @@ package ru.kelohonka.estimate.model;
 import java.util.List;
 
 /**
- * Основные входные данные для предварительного расчета проекта сруба.
- * Содержит геометрию сруба, стоимость леса, проемы, перерубы и дополнительные позиции сметы.
+ * Main estimate input model.
  */
 public record LogHouseInput(
         String projectName,
@@ -17,6 +16,8 @@ public record LogHouseInput(
         double timberPricePerCubicMeter,
         List<Double> innerWallLengthsMeters,
         GableType gableType,
+        List<GableInput> gables,
+        Double gableLengthMeters,
         Double gableHeightMeters,
         Integer gableCount,
         WorkingHeightMode workingHeightMode,

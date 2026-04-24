@@ -3,6 +3,7 @@ package ru.kelohonka.estimate;
 import ru.kelohonka.estimate.model.BoardInput;
 import ru.kelohonka.estimate.model.CrossCut;
 import ru.kelohonka.estimate.model.EstimateResult;
+import ru.kelohonka.estimate.model.GableInput;
 import ru.kelohonka.estimate.model.GableType;
 import ru.kelohonka.estimate.model.LogHouseInput;
 import ru.kelohonka.estimate.model.NotchType;
@@ -10,7 +11,6 @@ import ru.kelohonka.estimate.model.OpeningItem;
 import ru.kelohonka.estimate.model.OpeningType;
 import ru.kelohonka.estimate.model.RoofInput;
 import ru.kelohonka.estimate.model.StoveItem;
-import ru.kelohonka.estimate.model.TerraceInput;
 import ru.kelohonka.estimate.model.WorkingHeightMode;
 import ru.kelohonka.estimate.service.EstimateCalculatorService;
 
@@ -23,28 +23,16 @@ import static ru.kelohonka.estimate.EstimateConstants.DEFAULT_BOARD_PRICE_PER_CU
 import static ru.kelohonka.estimate.EstimateConstants.DEFAULT_REFERENCE_ROOF_PRICE;
 import static ru.kelohonka.estimate.EstimateConstants.DEFAULT_STOVE_INSTALLATION_PRICE;
 import static ru.kelohonka.estimate.EstimateConstants.DEFAULT_STOVE_PRICE;
-import static ru.kelohonka.estimate.EstimateConstants.DEFAULT_TERRACE_PRICE_PER_SQUARE_METER;
 import static ru.kelohonka.estimate.EstimateConstants.DEFAULT_TIMBER_PRICE_PER_CUBIC_METER;
 import static ru.kelohonka.estimate.model.OpeningType.DOOR;
 import static ru.kelohonka.estimate.model.OpeningType.WINDOW;
 
-/**
- * Демонстрационная точка входа для ручной проверки расчета.
- * Создает набор тестовых проектов, запускает расчет и печатает результат в консоль.
- */
 public class EstimateDemoApplication {
-    /**
-     * Точка входа demo-приложения.
-     *
-     * @param args аргументы командной строки
-     */
+
     public static void main(String[] args) {
         EstimateCalculatorService calculator = new EstimateCalculatorService();
 
-        List<LogHouseInput> demoHouses = List.of(
-                house()
-        );
-
+        List<LogHouseInput> demoHouses = List.of(house());
         List<EstimateWordExporter.EstimateBundle> bundles = demoHouses.stream()
                 .map(input -> new EstimateWordExporter.EstimateBundle(input, calculator.calculate(input)))
                 .toList();
@@ -63,21 +51,19 @@ public class EstimateDemoApplication {
         }
     }
 
-    /**
-     * Печатает результат расчета в консоль.
-     *
-     * @param input входные данные проекта
-     * @param result результат расчета
-     */
     private static void printEstimate(LogHouseInput input, EstimateResult result) {
-        List<OpeningItem> windows = input.openings().stream()
+        List<OpeningItem> openings = input.openings() == null ? List.of() : input.openings();
+        List<CrossCut> crossCuts = input.crossCuts() == null ? List.of() : input.crossCuts();
+        List<GableInput> gables = input.gables() == null ? List.of() : input.gables();
+
+        List<OpeningItem> windows = openings.stream()
                 .filter(opening -> opening.type() == OpeningType.WINDOW)
                 .toList();
-        List<OpeningItem> doors = input.openings().stream()
+        List<OpeningItem> doors = openings.stream()
                 .filter(opening -> opening.type() == OpeningType.DOOR)
                 .toList();
-        int crossCutCount = input.crossCuts().stream()
-                .mapToInt(crossCut -> crossCut.quantity())
+        int crossCutCount = crossCuts.stream()
+                .mapToInt(CrossCut::quantity)
                 .sum();
 
         System.out.println("==== Предварительный расчет ====");
@@ -86,6 +72,18 @@ public class EstimateDemoApplication {
         System.out.printf("Чистовая высота: %.2f м%n", input.requiredClearHeightMeters());
         System.out.printf("Рекомендуемое количество венцов: %.0f%n", result.suggestedCrownCount());
         System.out.printf("Высота сруба: %.2f м%n", result.logHeightMeters());
+        System.out.printf("Тип фронтонов: %s%n", input.gableType());
+        if (input.gableType() == GableType.LOG) {
+            if (!gables.isEmpty()) {
+                System.out.println("Фронтоны:");
+                for (GableInput gable : gables) {
+                    System.out.printf("  %s: %.2f x %.2f м%n", gable.name(), gable.lengthMeters(), gable.heightMeters());
+                }
+            } else {
+                System.out.printf("Фронтоны (длина x высота): %.2f x %.2f м, шт: %d%n",
+                        input.gableLengthMeters(), input.gableHeightMeters(), input.gableCount());
+            }
+        }
         System.out.printf("Количество перерубов: %d%n", crossCutCount);
         System.out.println("Окна: " + windows.size());
         if (!windows.isEmpty()) {
@@ -103,6 +101,8 @@ public class EstimateDemoApplication {
         System.out.printf("Площадь проемов: %.3f м2%n", result.openingsAreaSquareMeters());
         System.out.printf("Чистая площадь стен: %.3f м2%n", result.netWallAreaSquareMeters());
         System.out.printf("Кубатура стен: %.3f м3%n", result.wallVolumeCubicMeters());
+        System.out.printf("Площадь фронтонов: %.3f м2%n", result.gableAreaSquareMeters());
+        System.out.printf("Кубатура фронтонов: %.3f м3%n", result.gableVolumeCubicMeters());
         System.out.printf("Кубатура перерубов: %.3f м3%n", result.crossCutVolumeCubicMeters());
         System.out.printf("Общая кубатура бревна: %.3f м3%n", result.totalLogVolumeCubicMeters());
         System.out.printf("Стоимость леса: %.2f руб%n", result.timberCost());
@@ -116,93 +116,71 @@ public class EstimateDemoApplication {
         System.out.printf("ИТОГО: %.2f руб%n", result.grandTotal());
     }
 
-    /**
-     * Создает demo-проект дома.
-     *
-     * @param name название проекта
-     * @param length длина дома в метрах
-     * @param width ширина дома в метрах
-     * @param logDiameterMm диаметр бревна в миллиметрах
-     * @param clearHeight требуемая чистовая высота
-     * @param timberPrice цена леса за 1 м3
-     * @param crossCutCount количество перерубов
-     * @param openings список окон и дверей
-     * @param ceilingThickness толщина доски потолка в миллиметрах
-     * @param floorThickness толщина доски пола в миллиметрах
-     * @param withStove нужна ли печь
-     * @param terraceLength длина террасы
-     * @param terraceWidth ширина террасы
-     * @return входные данные проекта
-     */
     private static LogHouseInput house() {
-        double length = 8.0;
-        double width = 10.0;
+        double length = 6.2;
+        double width = 4.2;
+        List<GableInput> gables = gables(
+                gable("Фронтон 1", 4.2, 2.55),
+                gable("Фронтон 2", 4.8, 2.20),
+                gable("Фронтон 3", 3.6, 1.95)
+        );
+
         return new LogHouseInput(
-                "Демо-дом со всеми полями",
-                null,
+                "Баня 6*4",
+                14.6,
                 length,
                 width,
                 3.0,
-                240,
+                260,
                 3.0,
                 DEFAULT_TIMBER_PRICE_PER_CUBIC_METER,
-                List.of(8.0, 4.5),
+                List.of(6.2, 4.2),
                 GableType.LOG,
-                2.5,
-                2,
+                gables,
+                null,
+                null,
+                null,
                 WorkingHeightMode.AUTO,
                 null,
                 true,
                 NotchType.IN_BOWL,
                 List.of(
-                        new CrossCut("Переруб 1", 1, null),
-                        new CrossCut("Переруб 2", 2, 1.2)
+                        new CrossCut("Переруб 1", 1, null)
                 ),
                 openings(
                         window("Окно 1", 1.6, 1.4),
                         window("Окно 2", 1.2, 1.2),
-                        door("Дверь входная", 1.0, 2.1),
-                        door("Дверь внутренняя", 0.8, 2.0)
+                        window("Окно 3", 0.5, 0.5),
+                        window("Окно 4", 0.5, 0.5),
+                        door("Дверь входная", 1.0, 2.05),
+                        door("Дверь внутренняя", 0.9, 2.05),
+                        door("Дверь парная", 0.7, 2.05)
                 ),
+                new BoardInput(length, width, 25, DEFAULT_BOARD_PRICE_PER_CUBIC_METER),
                 new BoardInput(length, width, 32, DEFAULT_BOARD_PRICE_PER_CUBIC_METER),
-                new BoardInput(length, width, 40, DEFAULT_BOARD_PRICE_PER_CUBIC_METER),
                 new RoofInput(length, width, 6.0, 6.0, DEFAULT_REFERENCE_ROOF_PRICE, true),
                 new StoveItem("Печь", DEFAULT_STOVE_PRICE, DEFAULT_STOVE_INSTALLATION_PRICE),
-                new TerraceInput(3.0, 6.0, DEFAULT_TERRACE_PRICE_PER_SQUARE_METER),
+                null,
                 10.0
         );
     }
 
-    /**
-     * Собирает список проемов.
-     *
-     * @param openings массив проемов
-     * @return список проемов
-     */
+    private static List<GableInput> gables(GableInput... gables) {
+        return List.of(gables);
+    }
+
+    private static GableInput gable(String name, double lengthMeters, double heightMeters) {
+        return new GableInput(name, lengthMeters, heightMeters);
+    }
+
     private static List<OpeningItem> openings(OpeningItem... openings) {
         return List.of(openings);
     }
 
-    /**
-     * Создает оконный проем.
-     *
-     * @param name название окна
-     * @param width ширина окна
-     * @param height высота окна
-     * @return оконный проем
-     */
     private static OpeningItem window(String name, double width, double height) {
         return new OpeningItem(WINDOW, name, width, height, 0);
     }
 
-    /**
-     * Создает дверной проем.
-     *
-     * @param name название двери
-     * @param width ширина двери
-     * @param height высота двери
-     * @return дверной проем
-     */
     private static OpeningItem door(String name, double width, double height) {
         return new OpeningItem(DOOR, name, width, height, 0);
     }

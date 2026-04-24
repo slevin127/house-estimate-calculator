@@ -3,6 +3,7 @@ package ru.kelohonka.estimate.service;
 import ru.kelohonka.estimate.model.BoardInput;
 import ru.kelohonka.estimate.model.CrossCut;
 import ru.kelohonka.estimate.model.EstimateResult;
+import ru.kelohonka.estimate.model.GableInput;
 import ru.kelohonka.estimate.model.GableType;
 import ru.kelohonka.estimate.model.LogHouseInput;
 import ru.kelohonka.estimate.model.OpeningItem;
@@ -19,6 +20,12 @@ import java.util.List;
  */
 public class EstimateCalculatorService {
 
+    /**
+     * Выполняет полный расчет сметы по входным параметрам проекта.
+     *
+     * @param input входные данные проекта
+     * @return агрегированный результат расчета объемов и стоимостей
+     */
     public EstimateResult calculate(LogHouseInput input) {
         validate(input);
 
@@ -110,6 +117,11 @@ public class EstimateCalculatorService {
         );
     }
 
+    /**
+     * Проверяет входные данные на корректность перед расчетом.
+     *
+     * @param input входные данные проекта
+     */
     private void validate(LogHouseInput input) {
         if (input.houseLengthMeters() == null && (input.totalWallLengthMeters() == null || input.totalWallLengthMeters() <= 0)) {
             throw new IllegalArgumentException("House dimensions or total wall length must be provided");
@@ -137,14 +149,20 @@ public class EstimateCalculatorService {
             throw new IllegalArgumentException("Custom working height must be greater than 0");
         }
         if (input.gableType() == GableType.LOG) {
-            if (input.gableHeightMeters() == null || input.gableHeightMeters() <= 0) {
-                throw new IllegalArgumentException("Gable height must be greater than 0 for log gables");
-            }
-            if (input.gableCount() == null || input.gableCount() <= 0) {
-                throw new IllegalArgumentException("Gable count must be greater than 0 for log gables");
-            }
-            if (input.houseWidthMeters() == null || input.houseWidthMeters() <= 0) {
-                throw new IllegalArgumentException("House width must be provided for log gable calculation");
+            if (!safeGables(input).isEmpty()) {
+                if (safeGables(input).stream().anyMatch(g -> g.lengthMeters() <= 0 || g.heightMeters() <= 0)) {
+                    throw new IllegalArgumentException("Each gable length and height must be greater than 0 for log gables");
+                }
+            } else {
+                if (input.gableLengthMeters() == null || input.gableLengthMeters() <= 0) {
+                    throw new IllegalArgumentException("Gable length must be greater than 0 for log gables");
+                }
+                if (input.gableHeightMeters() == null || input.gableHeightMeters() <= 0) {
+                    throw new IllegalArgumentException("Gable height must be greater than 0 for log gables");
+                }
+                if (input.gableCount() == null || input.gableCount() <= 0) {
+                    throw new IllegalArgumentException("Gable count must be greater than 0 for log gables");
+                }
             }
         }
         if (input.innerWallLengthsMeters() != null && input.innerWallLengthsMeters().stream().anyMatch(length -> length < 0)) {
@@ -157,14 +175,36 @@ public class EstimateCalculatorService {
         validateBoard(input.floorBoard(), "Floor");
     }
 
+    /**
+     * Возвращает безопасный список проемов (пустой, если проемы не заданы).
+     *
+     * @param input входные данные проекта
+     * @return список проемов без null
+     */
     private List<OpeningItem> safeOpenings(LogHouseInput input) {
         return input.openings() == null ? List.of() : input.openings();
     }
 
+    /**
+     * Возвращает безопасный список перерубов (пустой, если перерубы не заданы).
+     *
+     * @param input входные данные проекта
+     * @return список перерубов без null
+     */
     private List<CrossCut> safeCrossCuts(LogHouseInput input) {
         return input.crossCuts() == null ? List.of() : input.crossCuts();
     }
 
+    private List<GableInput> safeGables(LogHouseInput input) {
+        return input.gables() == null ? List.of() : input.gables();
+    }
+
+    /**
+     * Определяет рабочую высоту венца в зависимости от выбранного режима.
+     *
+     * @param input входные данные проекта
+     * @return рабочая высота венца в метрах
+     */
     private double resolveWorkingHeight(LogHouseInput input) {
         if (input.workingHeightMode() == WorkingHeightMode.CUSTOM) {
             return input.customWorkingHeightMeters();
@@ -174,14 +214,32 @@ public class EstimateCalculatorService {
                 new double[]{0.18, 0.20, 0.22, 0.24, 0.26, 0.27});
     }
 
+    /**
+     * Рассчитывает суммарную площадь рубленых фронтонов.
+     *
+     * @param input входные данные проекта
+     * @return площадь фронтонов в квадратных метрах
+     */
     private double calculateGableArea(LogHouseInput input) {
         if (input.gableType() != GableType.LOG) {
             return 0.0;
         }
-        double singleGableArea = input.houseWidthMeters() * input.gableHeightMeters() / 2.0;
+        if (!safeGables(input).isEmpty()) {
+            return safeGables(input).stream()
+                    .mapToDouble(GableInput::areaSquareMeters)
+                    .sum();
+        }
+        double singleGableArea = input.gableLengthMeters() * input.gableHeightMeters() / 2.0;
         return singleGableArea * input.gableCount();
     }
 
+    /**
+     * Рассчитывает объем рубленых фронтонов по площади и коэффициенту, зависящему от диаметра бревна.
+     *
+     * @param input входные данные проекта
+     * @param gableArea площадь фронтонов
+     * @return объем фронтонов в кубических метрах
+     */
     private double calculateGableVolume(LogHouseInput input, double gableArea) {
         if (input.gableType() != GableType.LOG || gableArea <= 0) {
             return 0.0;
@@ -192,6 +250,14 @@ public class EstimateCalculatorService {
         return gableArea * gableCoefficient;
     }
 
+    /**
+     * Линейно интерполирует значение по табличным точкам.
+     *
+     * @param value входное значение оси X
+     * @param x массив X-координат табличных точек
+     * @param y массив Y-координат табличных точек
+     * @return интерполированное значение Y
+     */
     private double interpolate(int value, int[] x, double[] y) {
         if (value <= x[0]) {
             return y[0];
@@ -208,6 +274,12 @@ public class EstimateCalculatorService {
         return y[y.length - 1];
     }
 
+    /**
+     * Проверяет корректность параметров доски.
+     *
+     * @param board параметры доски
+     * @param label имя секции для текста ошибки
+     */
     private void validateBoard(BoardInput board, String label) {
         if (board == null) {
             return;
@@ -223,6 +295,12 @@ public class EstimateCalculatorService {
         }
     }
 
+    /**
+     * Рассчитывает объем доски по площади и толщине.
+     *
+     * @param boardInput параметры доски
+     * @return объем в кубических метрах
+     */
     private double calculateBoardVolume(BoardInput boardInput) {
         if (boardInput == null) {
             return 0.0;
@@ -230,6 +308,12 @@ public class EstimateCalculatorService {
         return boardInput.areaSquareMeters() * boardInput.thicknessMeters();
     }
 
+    /**
+     * Рассчитывает стоимость доски с округлением вверх до шага 50.
+     *
+     * @param boardInput параметры доски
+     * @return стоимость доски
+     */
     private double calculateBoardCost(BoardInput boardInput) {
         if (boardInput == null) {
             return 0.0;
@@ -237,6 +321,14 @@ public class EstimateCalculatorService {
         return MoneyUtils.roundUpToStep(calculateBoardVolume(boardInput) * boardInput.pricePerCubicMeter(), 50);
     }
 
+    /**
+     * Рассчитывает объем переруба.
+     *
+     * @param crossCut параметры переруба
+     * @param input входные данные проекта
+     * @param logHeightMeters расчетная высота сруба
+     * @return объем переруба в кубических метрах
+     */
     private double calculateCrossCutVolume(CrossCut crossCut, LogHouseInput input, double logHeightMeters) {
         double lengthMeters = crossCut.customLengthMeters() != null
                 ? crossCut.customLengthMeters()
@@ -244,6 +336,12 @@ public class EstimateCalculatorService {
         return input.logDiameterMeters() * lengthMeters * logHeightMeters * crossCut.quantity();
     }
 
+    /**
+     * Возвращает длину переруба по диаметру бревна при отсутствии пользовательского значения.
+     *
+     * @param logDiameterMm диаметр бревна в миллиметрах
+     * @return длина переруба в метрах
+     */
     private double resolveCrossCutLength(int logDiameterMm) {
         if (logDiameterMm <= 300) {
             return 1.0;
@@ -254,6 +352,12 @@ public class EstimateCalculatorService {
         return 1.2;
     }
 
+    /**
+     * Рассчитывает стоимость кровли пропорционально эталонной площади и цене.
+     *
+     * @param roofInput параметры расчета кровли
+     * @return стоимость кровли с целевым округлением
+     */
     private double calculateRoofCost(RoofInput roofInput) {
         if (roofInput == null) {
             return 0.0;
@@ -266,6 +370,12 @@ public class EstimateCalculatorService {
         return MoneyUtils.roundUpToStep(rawCost, 50);
     }
 
+    /**
+     * Рассчитывает стоимость террасы по площади.
+     *
+     * @param terraceInput параметры террасы
+     * @return стоимость террасы
+     */
     private double calculateTerraceCost(TerraceInput terraceInput) {
         if (terraceInput == null) {
             return 0.0;
